@@ -5,8 +5,5 @@ Here is ESPORT.RE's official csgo plugin
 [...]
 
 ## Credits
-Big thanks to Kailo for coding the plugin!
+Thanks to Kailo for coding the plugin!
 You can contact him on Steam http://steamcommunity.com/id/kailo97/
-
-## Donate
-You can donate FOR THE PROJECT with PayPal at softwares974@live.com. Thanks!
