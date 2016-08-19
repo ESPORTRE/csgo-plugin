@@ -5,6 +5,8 @@
 #pragma newdecls required
 #pragma semicolon 1
 
+#define DEBUG 1
+
 enum MatchState
 {
 	MatchState_NoMatch,
@@ -17,6 +19,9 @@ enum MatchState
 	MatchState_End
 };
 MatchState g_matchstate = MatchState_NoMatch;
+#if !DEBUG
+	#define SetMatchState(%1) g_matchstate = %1
+#endif
 
 int cutwinner;
 
@@ -41,6 +46,7 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_switch", Cmd_StaySwitch);
 
 	RegAdminCmd("sm_start", Cmd_Start, ADMFLAG_GENERIC);
+	RegAdminCmd("sm_esport", Cmd_Debug, ADMFLAG_GENERIC);
 
 	#define HookEvent(%1,%2,%3) PrintToConsoleAll("[SM] HookEvent '" ... %1 ... "' %i", HookEventEx(%1, %2, %3))
 	HookEvent("round_start", Event_RoundStart, EventHookMode_Post);
@@ -70,8 +76,8 @@ public void BDConnect(Database db, const char[] error, any data)
 
 public void OnMapStart()
 {
-	PrintToConsoleAll("[SM] OnMapStart forward");
-	PrintToConsoleAll(" warmup %i", GameRules_GetProp("m_bWarmupPeriod"));
+	// PrintToConsoleAll("[SM] OnMapStart forward");
+	// PrintToConsoleAll(" warmup %i", GameRules_GetProp("m_bWarmupPeriod"));
 
 	// TODO: Move to game start event. Or no?
 	if (GameRules_GetProp("m_bWarmupPeriod"))
@@ -80,11 +86,11 @@ public void OnMapStart()
 
 public void OnMapEnd()
 {
-	PrintToConsoleAll("[SM] OnMapEnd forward");
-	PrintToConsoleAll(" g_matchstate %i", g_matchstate);
+	// PrintToConsoleAll("[SM] OnMapEnd forward");
+	// PrintToConsoleAll(" g_matchstate %i", g_matchstate);
 
 	if (g_matchstate == MatchState_End)
-		g_matchstate = MatchState_NoMatch;
+		SetMatchState(MatchState_NoMatch);
 }
 
 public bool OnClientConnect(int client, char[] rejectmsg, int maxlen)
@@ -106,21 +112,63 @@ public void OnClientConnected(int client)
 {
 	PrintToConsoleAll("[SM] OnClientConnected forward");
 	PrintToConsoleAll(" client %i", client);
-
+	
 	if (g_matchstate == MatchState_NoMatch)
 	{
+		SetMatchState(MatchState_Querying);
+
 		// TODO: DataBase
-		g_matchstate = MatchState_Querying;
-		
 		// Quering simulation
-		CreateTimer(0.1, Timer_GetMatch, true);
+		// CreateTimer(0.1, Timer_GetMatch, true);
+
+		char buffer[128];
+		GetServerIp(buffer, sizeof(buffer));
+		Format(buffer, sizeof(buffer), "SELECT id, team1, team2, map FROM matchs WHERE server_ip = '%s' AND live = 1", buffer);
+		g_db.Query(Query_GetMatch, buffer);
 	}
 
-	for (int i = 1; i <= MaxClients; i++)
-		g_auth[i] = AuthState_No;
+	g_auth[client] = AuthState_No;
 }
 
-public Action Timer_GetMatch(Handle timer, bool result)
+public void Query_GetMatch(Database db, DBResultSet results, const char[] error, any data)
+{
+	PrintToConsoleAll("[SM] Query_GetMatch callback");
+
+	if (g_matchstate != MatchState_Querying)
+		LogError("Result was taken but g_matchstate != MatchState_Querying.");
+
+	if (results == null) {
+		for (int i = 1; i <= MaxClients; i++)
+			if (IsClientConnected(i))
+				KickClient(i, "Can't connect to database");
+		SetMatchState(MatchState_NoMatch);
+		ThrowError("GetMatch query failed: %s", error);
+	}
+
+	PrintToConsoleAll(" RowCount %i", results.RowCount);
+
+	if (results.RowCount) {
+		SetMatchState(MatchState_Wating);
+		results.FetchRow();
+		char map[64] = "de_dust2", curMap[64];
+		results.FetchString(3, map, sizeof(map));
+		GetCurrentMap(curMap, sizeof(curMap));
+		if (!StrEqual(curMap, map))
+			ForceChangeLevel(map, "");
+		else
+			for (int i = 1; i <= MaxClients; i++)
+				if (IsClientConnected(i) && g_auth[i] == AuthState_Authed)
+					PerfomClientCheck(i);
+	}
+	else {
+		for (int i = 1; i <= MaxClients; i++)
+			if (IsClientConnected(i))
+				KickClient(i, "It's private tournament server powered by www.esport.re");
+		SetMatchState(MatchState_NoMatch);
+	}
+}
+
+/* public Action Timer_GetMatch(Handle timer, bool result)
 {
 	PrintToConsoleAll("[SM] Timer_GetMatch timer");
 
@@ -128,7 +176,7 @@ public Action Timer_GetMatch(Handle timer, bool result)
 		LogError("Result was taken but g_matchstate != MatchState_Querying.");
 
 	if (result) {
-		g_matchstate = MatchState_Wating;
+		SetMatchState(MatchState_Wating);
 		char map[65] = "de_dust2", curMap[65];
 		GetCurrentMap(curMap, sizeof(curMap));
 		if (!StrEqual(curMap, map))
@@ -142,7 +190,7 @@ public Action Timer_GetMatch(Handle timer, bool result)
 		for (int i = 1; i <= MaxClients; i++)
 			if (IsClientConnected(i))
 				KickClient(i, "It's private tournament server powered by www.esport.re");
-}
+} */
 
 public void OnClientAuthorized(int client, const char[] auth)
 {
@@ -166,12 +214,12 @@ void PerfomClientCheck(int client)
 	PrintToConsoleAll("[SM] PerfomClientCheck function");
 	PrintToConsoleAll(" client %i", client);
 
-	char auth[32];
-	GetClientAuthId(client, AuthId_Steam2, auth, sizeof(auth));
-	if (StrEqual(auth[8], "1:62167828")) {
-		g_auth = AuthState_Allowed;
-		return;
-	}
+// 	char auth[32];
+// 	GetClientAuthId(client, AuthId_Steam2, auth, sizeof(auth));
+// 	if (StrEqual(auth[8], "1:62167828")) {
+// 		g_auth = AuthState_Allowed;
+// 		return;
+// 	}
 
 	char buffer[128];
 	GetClientAuthId(client, AuthId_SteamID64, buffer, sizeof(buffer));
@@ -185,7 +233,7 @@ public void Query_CheckAdmin(Database db, DBResultSet results, const char[] erro
 	PrintToConsoleAll(" client %i", client);
 
 	if (results == null)
-		ThrowError("Checking admin query failed: %s", error);
+		ThrowError("CheckAdmin query failed: %s", error);
 
 	PrintToConsoleAll(" RowCount %i", results.RowCount);
 
@@ -262,10 +310,12 @@ public void Event_RoundStart(Event event, const char[] name, bool dontBroadcast)
 	PrintToConsoleAll(" warmup %i", GameRules_GetProp("m_bWarmupPeriod"));
 	PrintToConsoleAll(" g_matchstate %i", g_matchstate);
 
-	if (g_matchstate == MatchState_AfterCut)
-		PrintToChatAll("Winner team can type !switch for change side or !stay for stay.");
-	else if (g_matchstate == MatchState_Cut)
-		PrintCenterTextAll("Cut round!");
+	switch (g_matchstate) {
+		case MatchState_AfterCut:
+			PrintToChatAll("Winner team can type !switch for change side or !stay for stay.");
+		case MatchState_Cut:
+			PrintCenterTextAll("Cut round!");
+	}
 }
 
 //	"round_end"
@@ -283,7 +333,7 @@ public void Event_RoundEnd(Event event, const char[] name, bool dontBroadcast)
 
 	switch (g_matchstate) {
 		case MatchState_Cut: {
-			g_matchstate = MatchState_AfterCut;
+			SetMatchState(MatchState_AfterCut);
 			LoadSetCvar("mp_maxmoney");
 			LoadSetCvar("mp_t_default_secondary");
 			LoadSetCvar("mp_ct_default_secondary");
@@ -330,7 +380,7 @@ public void Event_GameStart(Event event, const char[] name, bool dontBroadcast)
 	event.GetString("objective", objective, sizeof(objective));
 	PrintToConsoleAll(" objective %s", objective);
 
-//	g_matchstate = MatchState_Wating;
+//	SetMatchState(MatchState_Wating);
 //	if (GameRules_GetProp("m_bWarmupPeriod"))
 //		FindConVar("mp_warmup_pausetimer").BoolValue = true;
 }
@@ -366,7 +416,7 @@ public void Event_GameEnd(Event event, const char[] name, bool dontBroadcast)
 	PrintToConsoleAll(" g_matchstate %i", g_matchstate);
 
 	if (g_matchstate == MatchState_Match)
-		g_matchstate = MatchState_End;
+		SetMatchState(MatchState_End);
 }
 
 //	"player_spawn"				// player spawned in game
@@ -385,7 +435,7 @@ public void Event_WinPanelMatch(Event event, const char[] name, bool dontBroadca
 {
 	PrintToConsoleAll("[SM] 'cs_win_panel_match' event");
 
-	g_matchstate = MatchState_End;
+	SetMatchState(MatchState_End);
 
 	PrintToConsoleAll("[SM] T score %i", CS_GetTeamScore(CS_TEAM_T));
 	PrintToConsoleAll("[SM] CT score %i", CS_GetTeamScore(CS_TEAM_CT));
@@ -428,14 +478,14 @@ public Action Hook_WeaponEquip(int client, int weapon)
 	PrintToConsoleAll("[SM] 'Weapon Equip' hook");
 	PrintToConsoleAll(" client %i", client);
 	PrintToConsoleAll(" weapon %i", weapon);
-	char classname[32];
-	GetEntityClassname(weapon, classname, sizeof(classname));
-	PrintToConsoleAll(" classname %s", classname);
 
-	
-	if (StrEqual(classname, "weapon_c4")) {
-		AcceptEntityInput(weapon, "Kill");
-		return Plugin_Stop;
+	if (g_matchstate == MatchState_Cut) {
+		char classname[32];
+		GetEntityClassname(weapon, classname, sizeof(classname));
+		if (StrEqual(classname, "weapon_c4")) {
+			AcceptEntityInput(weapon, "Kill");
+			return Plugin_Stop;
+		}
 	}
 
 	return Plugin_Continue;
@@ -532,3 +582,35 @@ public Action Cmd_StaySwitch(int client, int args)
 
 	return Plugin_Handled;
 }
+
+/// Usage: sm_esport <type>
+public Action Cmd_Debug(int client, int args)
+{
+	if (args < 1) {
+		ReplyToCommand(client, "Usage: sm_esport <type>");
+		return Plugin_Handled;
+	}
+
+	char arg[12];
+	GetCmdArg(1, arg, sizeof(arg));
+	switch (StringToInt(arg)) {
+		case 0:
+			ReplyToCommand(client, "MatchState: %i", g_matchstate);
+	}
+
+	return Plugin_Handled;
+}
+
+int GetServerIp(char[] buffer, int maxlength)
+{
+	int hostip = FindConVar("hostip").IntValue;
+	return FormatEx(buffer, maxlength, "%i.%i.%i.%i:%i", hostip >> 24 & 0xFF, hostip >> 16 & 0xFF, hostip >> 8 & 0xFF, hostip & 0xFF, FindConVar("hostport").IntValue);
+}
+
+#if DEBUG
+void SetMatchState(MatchState matchstate)
+{
+	PrintToConsoleAll("[SM] MatchState: %i", matchstate);
+	g_matchstate = matchstate;
+}
+#endif
