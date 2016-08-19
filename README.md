@@ -15,7 +15,8 @@ Features
 ### Players stats
 [...]
 
-## Plugin commands
+Plugin commands
+--------------------
 [...]
 
 Credits
