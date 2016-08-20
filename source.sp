@@ -31,12 +31,18 @@ enum AuthState
 {
 	AuthState_No,
 	AuthState_Authed,
-	AuthState_Allowed
+	AuthState_Admin,
+	AuthState_Player,
+	AuthState_Bot
 };
 
 AuthState g_auth[MAXPLAYERS + 1] = {AuthState_No, ...};
 
 Database g_db = null;
+
+int g_id,
+	g_team1,
+	g_team2;
 
 public void OnPluginStart()
 {
@@ -117,10 +123,6 @@ public void OnClientConnected(int client)
 	{
 		SetMatchState(MatchState_Querying);
 
-		// TODO: DataBase
-		// Quering simulation
-		// CreateTimer(0.1, Timer_GetMatch, true);
-
 		char buffer[128];
 		GetServerIp(buffer, sizeof(buffer));
 		Format(buffer, sizeof(buffer), "SELECT id, team1, team2, map FROM matchs WHERE server_ip = '%s' AND live = 1", buffer);
@@ -138,9 +140,7 @@ public void Query_GetMatch(Database db, DBResultSet results, const char[] error,
 		LogError("Result was taken but g_matchstate != MatchState_Querying.");
 
 	if (results == null) {
-		for (int i = 1; i <= MaxClients; i++)
-			if (IsClientConnected(i))
-				KickClient(i, "Can't connect to database");
+		KickAll("Can't connect to database");
 		SetMatchState(MatchState_NoMatch);
 		ThrowError("GetMatch query failed: %s", error);
 	}
@@ -150,8 +150,12 @@ public void Query_GetMatch(Database db, DBResultSet results, const char[] error,
 	if (results.RowCount) {
 		SetMatchState(MatchState_Wating);
 		results.FetchRow();
-		char map[64] = "de_dust2", curMap[64];
+		g_id = results.FetchInt(0);
+		g_team1 = results.FetchInt(1);
+		g_team2 = results.FetchInt(2);
+		char map[64], curMap[64];
 		results.FetchString(3, map, sizeof(map));
+		PrintToConsoleAll(" %i, %i, %i, %s", g_id, g_team1, g_team2, map);
 		GetCurrentMap(curMap, sizeof(curMap));
 		if (!StrEqual(curMap, map))
 			ForceChangeLevel(map, "");
@@ -161,36 +165,10 @@ public void Query_GetMatch(Database db, DBResultSet results, const char[] error,
 					PerfomClientCheck(i);
 	}
 	else {
-		for (int i = 1; i <= MaxClients; i++)
-			if (IsClientConnected(i))
-				KickClient(i, "It's private tournament server powered by www.esport.re");
+		KickAll("It's private tournament server powered by www.esport.re");
 		SetMatchState(MatchState_NoMatch);
 	}
 }
-
-/* public Action Timer_GetMatch(Handle timer, bool result)
-{
-	PrintToConsoleAll("[SM] Timer_GetMatch timer");
-
-	if (g_matchstate != MatchState_Querying)
-		LogError("Result was taken but g_matchstate != MatchState_Querying.");
-
-	if (result) {
-		SetMatchState(MatchState_Wating);
-		char map[65] = "de_dust2", curMap[65];
-		GetCurrentMap(curMap, sizeof(curMap));
-		if (!StrEqual(curMap, map))
-			ForceChangeLevel(map, "");
-		else
-			for (int i = 1; i <= MaxClients; i++)
-				if (IsClientConnected(i) && g_auth[i] == AuthState_Authed)
-					PerfomClientCheck(i);
-	}
-	else
-		for (int i = 1; i <= MaxClients; i++)
-			if (IsClientConnected(i))
-				KickClient(i, "It's private tournament server powered by www.esport.re");
-} */
 
 public void OnClientAuthorized(int client, const char[] auth)
 {
@@ -199,7 +177,7 @@ public void OnClientAuthorized(int client, const char[] auth)
 	PrintToConsoleAll(" auth %s", auth);
 
 	if (StrEqual(auth, "BOT"))
-		g_auth = AuthState_Allowed;
+		g_auth = AuthState_Bot;
 	else
 		switch (g_matchstate) {
 			case MatchState_Querying:
@@ -217,7 +195,7 @@ void PerfomClientCheck(int client)
 // 	char auth[32];
 // 	GetClientAuthId(client, AuthId_Steam2, auth, sizeof(auth));
 // 	if (StrEqual(auth[8], "1:62167828")) {
-// 		g_auth = AuthState_Allowed;
+// 		g_auth = AuthState_Player;
 // 		return;
 // 	}
 
@@ -238,7 +216,7 @@ public void Query_CheckAdmin(Database db, DBResultSet results, const char[] erro
 	PrintToConsoleAll(" RowCount %i", results.RowCount);
 
 	if (results.RowCount)
-		g_auth = AuthState_Allowed;
+		g_auth = AuthState_Admin;
 		// TODO: Give admin rights
 	else
 		// TODO: DataBase
@@ -254,7 +232,7 @@ public Action Timer_CheckUser(Handle timer, int client)
 	char auth[32];
 	GetClientAuthId(client, AuthId_Steam2, auth, sizeof(auth));
 	if (StrEqual(auth, "STEAM_1:1:14535232"))
-		g_auth = AuthState_Allowed;
+		g_auth = AuthState_Player;
 	else
 		KickClient(client, "It's private tournament server powered by www.esport.re");
 }
@@ -475,9 +453,9 @@ public Action Event_ItemEquip(Event event, const char[] name, bool dontBroadcast
 
 public Action Hook_WeaponEquip(int client, int weapon)
 {
-	PrintToConsoleAll("[SM] 'Weapon Equip' hook");
-	PrintToConsoleAll(" client %i", client);
-	PrintToConsoleAll(" weapon %i", weapon);
+	// PrintToConsoleAll("[SM] 'Weapon Equip' hook");
+	// PrintToConsoleAll(" client %i", client);
+	// PrintToConsoleAll(" weapon %i", weapon);
 
 	if (g_matchstate == MatchState_Cut) {
 		char classname[32];
@@ -605,6 +583,13 @@ int GetServerIp(char[] buffer, int maxlength)
 {
 	int hostip = FindConVar("hostip").IntValue;
 	return FormatEx(buffer, maxlength, "%i.%i.%i.%i:%i", hostip >> 24 & 0xFF, hostip >> 16 & 0xFF, hostip >> 8 & 0xFF, hostip & 0xFF, FindConVar("hostport").IntValue);
+}
+
+void KickAll(const char[] reason)
+{
+	for (int i = 1; i <= MaxClients; i++)
+		if (IsClientConnected(i))
+			KickClient(i, "%s", reason);
 }
 
 #if DEBUG
