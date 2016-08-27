@@ -215,9 +215,13 @@ public void Query_CheckAdmin(Database db, DBResultSet results, const char[] erro
 
 	PrintToConsoleAll(" RowCount %i", results.RowCount);
 
-	if (results.RowCount)
+	if (results.RowCount) {
+#if defined DEBUG
+		PrintToServer("%L authed as admin", client);
+#endif
 		g_auth = AuthState_Admin;
-		// TODO: Give admin rights
+		GiveRights(client);
+	}
 	else
 		// TODO: DataBase
 		// Quering simulation
@@ -599,3 +603,24 @@ void SetMatchState(MatchState matchstate)
 	g_matchstate = matchstate;
 }
 #endif
+
+void GiveRights(int client)
+{
+	char ident[21];
+	// TODO: Check if can't get AuthId
+	GetClientAuthId(client, AuthId_Steam2, ident, sizeof(ident));
+	AdminId adm = FindAdminByIdentity(AUTHMETHOD_STEAM, ident);
+	if (adm == INVALID_ADMIN_ID) {
+		adm = CreateAdmin();
+		if (adm.BindIdentity(AUTHMETHOD_STEAM, ident)) {
+			adm.SetFlag(Admin_Root, true);
+			adm.ImmunityLevel = 99;
+		}
+		else
+			LogError("Could not bind admin %L (identity \"%s\")", client, ident);
+	}
+#if defined DEBUG
+	else
+		PrintToServer("Trying to add admin: admin %L already in cache", client);
+#endif
+}
